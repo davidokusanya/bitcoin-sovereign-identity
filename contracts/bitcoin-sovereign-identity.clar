@@ -77,3 +77,87 @@
     metadata: (string-utf8 256),
   }
 )
+
+;; Zero-knowledge proof registry
+(define-map zk-proof-registry
+  (buff 32)
+  {
+    prover: principal,
+    is-verified: bool,
+    proof-timestamp: uint,
+    proof-payload: (buff 1024),
+  }
+)
+
+;; PROTOCOL STATE
+
+(define-data-var protocol-admin principal tx-sender)
+(define-data-var credential-counter uint u0)
+
+;; INPUT VALIDATION UTILITIES
+
+(define-private (valid-recovery-guardian? (guardian (optional principal)))
+  (match guardian
+    recovery-addr (and
+      (not (is-eq recovery-addr tx-sender))
+      (not (is-eq recovery-addr (var-get protocol-admin)))
+    )
+    true
+  )
+)
+
+(define-private (valid-proof-payload? (payload (buff 1024)))
+  (and
+    (>= (len payload) MIN-PROOF-LENGTH)
+    (not (is-eq payload 0x))
+  )
+)
+
+(define-private (valid-expiration-time? (expiry uint))
+  (> expiry (+ stacks-block-height MIN-EXPIRY-BLOCKS))
+)
+
+(define-private (valid-metadata-size? (metadata (string-utf8 256)))
+  (<= (len metadata) MAX-METADATA-SIZE)
+)
+
+(define-private (valid-hash? (hash (buff 32)))
+  (not (is-eq hash 0x0000000000000000000000000000000000000000000000000000000000000000))
+)
+
+;; PROTOCOL ADMINISTRATION
+
+(define-public (transfer-admin-rights (new-admin principal))
+  (begin
+    (asserts! (is-eq tx-sender (var-get protocol-admin)) ERR-UNAUTHORIZED)
+    (asserts! (not (is-eq new-admin tx-sender)) ERR-INVALID-INPUT)
+    (ok (var-set protocol-admin new-admin))
+  )
+)
+
+;; SOVEREIGN IDENTITY MANAGEMENT
+
+(define-public (register-sovereign-identity
+    (identity-hash (buff 32))
+    (recovery-guardian (optional principal))
+  )
+  (let (
+      (caller tx-sender)
+      (existing (map-get? sovereign-identities caller))
+    )
+    ;; Validate registration requirements
+    (asserts! (is-none existing) ERR-IDENTITY-EXISTS)
+    (asserts! (valid-hash? identity-hash) ERR-INVALID-INPUT)
+    (asserts! (valid-recovery-guardian? recovery-guardian) ERR-INVALID-RECOVERY)
+
+    ;; Create new sovereign identity
+    (ok (map-set sovereign-identities caller {
+      identity-hash: identity-hash,
+      credentials: (list),
+      reputation-score: DEFAULT-REPUTATION,
+      recovery-guardian: recovery-guardian,
+      last-activity: stacks-block-height,
+      identity-status: "ACTIVE",
+    }))
+  )
+)

@@ -247,3 +247,84 @@
     }))
   )
 )
+
+(define-public (revoke-credential (credential-id uint))
+  (let (
+      (issuer tx-sender)
+      (credential-key {
+        issuer: issuer,
+        credential-id: credential-id,
+      })
+      (credential-data (map-get? verifiable-credentials credential-key))
+    )
+    (asserts! (is-some credential-data) ERR-CREDENTIAL-INVALID)
+
+    (ok (map-set verifiable-credentials credential-key
+      (merge (unwrap-panic credential-data) { is-revoked: true })
+    ))
+  )
+)
+
+;; REPUTATION MECHANICS
+
+(define-public (adjust-reputation
+    (identity principal)
+    (adjustment int)
+  )
+  (let (
+      (identity-data (map-get? sovereign-identities identity))
+      (current-score (get reputation-score (unwrap-panic identity-data)))
+      (adjustment-magnitude (if (< adjustment 0)
+        (* adjustment -1)
+        adjustment
+      ))
+    )
+    (asserts! (is-eq tx-sender (var-get protocol-admin)) ERR-UNAUTHORIZED)
+    (asserts! (is-some identity-data) ERR-IDENTITY-NOT-FOUND)
+    (asserts!
+      (or
+        (> adjustment 0)
+        (>= (to-int current-score) adjustment-magnitude)
+      )
+      ERR-REPUTATION-BOUNDS
+    )
+
+    (let ((new-score (if (> adjustment 0)
+        (+ current-score (to-uint adjustment))
+        (to-uint (- (to-int current-score) adjustment-magnitude))
+      )))
+      (ok (map-set sovereign-identities identity
+        (merge (unwrap-panic identity-data) {
+          reputation-score: new-score,
+          last-activity: stacks-block-height,
+        })
+      ))
+    )
+  )
+)
+
+;; IDENTITY RECOVERY SYSTEM
+
+(define-public (execute-identity-recovery
+    (identity principal)
+    (new-identity-hash (buff 32))
+  )
+  (let (
+      (guardian tx-sender)
+      (identity-data (map-get? sovereign-identities identity))
+      (recovery-guardian (get recovery-guardian (unwrap-panic identity-data)))
+    )
+    (asserts! (is-some identity-data) ERR-IDENTITY-NOT-FOUND)
+    (asserts! (is-some recovery-guardian) ERR-UNAUTHORIZED)
+    (asserts! (is-eq guardian (unwrap-panic recovery-guardian)) ERR-UNAUTHORIZED)
+    (asserts! (valid-hash? new-identity-hash) ERR-INVALID-INPUT)
+
+    (ok (map-set sovereign-identities identity
+      (merge (unwrap-panic identity-data) {
+        identity-hash: new-identity-hash,
+        last-activity: stacks-block-height,
+        identity-status: "RECOVERED",
+      })
+    ))
+  )
+)

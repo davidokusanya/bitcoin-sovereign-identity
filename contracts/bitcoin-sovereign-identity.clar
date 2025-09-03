@@ -328,3 +328,53 @@
     ))
   )
 )
+
+;; READ-ONLY QUERY FUNCTIONS
+
+(define-read-only (get-sovereign-identity (identity principal))
+  (map-get? sovereign-identities identity)
+)
+
+(define-read-only (get-verifiable-credential
+    (issuer principal)
+    (credential-id uint)
+  )
+  (map-get? verifiable-credentials {
+    issuer: issuer,
+    credential-id: credential-id,
+  })
+)
+
+(define-read-only (validate-credential
+    (issuer principal)
+    (credential-id uint)
+  )
+  (let ((credential (get-verifiable-credential issuer credential-id)))
+    (asserts! (is-some credential) ERR-CREDENTIAL-INVALID)
+    (let ((cred-data (unwrap-panic credential)))
+      (ok (and
+        (not (get is-revoked cred-data))
+        (< stacks-block-height (get expires-at cred-data))
+      ))
+    )
+  )
+)
+
+(define-read-only (get-zk-proof (proof-hash (buff 32)))
+  (map-get? zk-proof-registry proof-hash)
+)
+
+(define-read-only (get-reputation-score (identity principal))
+  (match (map-get? sovereign-identities identity)
+    identity-data (some (get reputation-score identity-data))
+    none
+  )
+)
+
+(define-read-only (get-protocol-admin)
+  (var-get protocol-admin)
+)
+
+(define-read-only (get-credential-counter)
+  (var-get credential-counter)
+)

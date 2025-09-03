@@ -161,3 +161,89 @@
     }))
   )
 )
+
+(define-public (update-identity-activity (identity principal))
+  (let ((identity-data (map-get? sovereign-identities identity)))
+    (asserts! (is-some identity-data) ERR-IDENTITY-NOT-FOUND)
+    (asserts! (is-eq tx-sender identity) ERR-UNAUTHORIZED)
+
+    (ok (map-set sovereign-identities identity
+      (merge (unwrap-panic identity-data) { last-activity: stacks-block-height })
+    ))
+  )
+)
+
+;; ZERO-KNOWLEDGE PROOF SYSTEM
+
+(define-public (submit-zk-proof
+    (proof-hash (buff 32))
+    (proof-payload (buff 1024))
+  )
+  (let (
+      (caller tx-sender)
+      (identity (map-get? sovereign-identities caller))
+      (existing-proof (map-get? zk-proof-registry proof-hash))
+    )
+    ;; Validate proof submission
+    (asserts! (is-some identity) ERR-IDENTITY-NOT-FOUND)
+    (asserts! (valid-hash? proof-hash) ERR-INVALID-INPUT)
+    (asserts! (valid-proof-payload? proof-payload) ERR-PROOF-DATA-INVALID)
+    (asserts! (is-none existing-proof) ERR-INVALID-PROOF)
+
+    ;; Register proof for verification
+    (ok (map-set zk-proof-registry proof-hash {
+      prover: caller,
+      is-verified: false,
+      proof-timestamp: stacks-block-height,
+      proof-payload: proof-payload,
+    }))
+  )
+)
+
+(define-public (verify-zk-proof (proof-hash (buff 32)))
+  (let ((proof-data (map-get? zk-proof-registry proof-hash)))
+    (asserts! (is-some proof-data) ERR-INVALID-PROOF)
+    (asserts! (is-eq tx-sender (var-get protocol-admin)) ERR-UNAUTHORIZED)
+
+    (ok (map-set zk-proof-registry proof-hash
+      (merge (unwrap-panic proof-data) { is-verified: true })
+    ))
+  )
+)
+
+;; VERIFIABLE CREDENTIAL SYSTEM
+
+(define-public (issue-verifiable-credential
+    (holder principal)
+    (claim-hash (buff 32))
+    (expires-at uint)
+    (metadata (string-utf8 256))
+  )
+  (let (
+      (issuer tx-sender)
+      (current-id (var-get credential-counter))
+      (credential-key {
+        issuer: issuer,
+        credential-id: current-id,
+      })
+      (issuer-identity (map-get? sovereign-identities issuer))
+      (holder-identity (map-get? sovereign-identities holder))
+    )
+    ;; Validate credential issuance
+    (asserts! (is-some issuer-identity) ERR-IDENTITY-NOT-FOUND)
+    (asserts! (is-some holder-identity) ERR-IDENTITY-NOT-FOUND)
+    (asserts! (valid-hash? claim-hash) ERR-INVALID-INPUT)
+    (asserts! (valid-expiration-time? expires-at) ERR-INVALID-EXPIRATION)
+    (asserts! (valid-metadata-size? metadata) ERR-INVALID-INPUT)
+
+    ;; Issue new credential
+    (var-set credential-counter (+ current-id u1))
+    (ok (map-set verifiable-credentials credential-key {
+      holder: holder,
+      claim-hash: claim-hash,
+      expires-at: expires-at,
+      is-revoked: false,
+      metadata: metadata,
+    }))
+  )
+)
